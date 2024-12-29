@@ -21,6 +21,10 @@ reqwest = "0.11.12"
 thiserror = "1.0.37"
 futures = "0.3.5"
 itertools = "0.11.0"
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # EVM based crates
 cfmms = "0.6.2"
@@ -40,6 +44,9 @@ indicatif = "0.17.5"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
+mockall = "0.11"
+test-log = "0.2"
+env_logger = "0.10"
 
 [[bench]]
 name = "benchmarks"

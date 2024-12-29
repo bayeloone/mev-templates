@@ -7,7 +7,7 @@ use cfmms::{
 use csv::StringRecord;
 use ethers::{
     providers::{Provider, Ws},
-    types::H160,
+    types::{H160, U256},
 };
 use log::info;
 use std::{path::Path, str::FromStr, sync::Arc};
@@ -27,6 +27,8 @@ pub struct Pool {
     pub decimals0: u8,
     pub decimals1: u8,
     pub fee: u32,
+    pub reserve0: U256,
+    pub reserve1: U256,
 }
 
 impl From<StringRecord> for Pool {
@@ -44,6 +46,8 @@ impl From<StringRecord> for Pool {
             decimals0: record.get(4).unwrap().parse().unwrap(),
             decimals1: record.get(5).unwrap().parse().unwrap(),
             fee: record.get(6).unwrap().parse().unwrap(),
+            reserve0: U256::zero(),
+            reserve1: U256::zero(),
         }
     }
 }
@@ -63,7 +67,48 @@ impl Pool {
             self.fee,
         )
     }
+
+    pub fn get_liquidity_usd(&self) -> U256 {
+        // USDC address on Ethereum mainnet
+        let usdc = H160::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        
+        // Case 1: Direct USDC pair
+        // If one of the tokens is USDC, we can directly use its reserve
+        // USDC has 6 decimals, so reserve0 or reserve1 * 10^6 = USD value
+        if self.token0 == usdc {
+            self.reserve0 * U256::from(10).pow(U256::from(6))
+        } else if self.token1 == usdc {
+            self.reserve1 * U256::from(10).pow(U256::from(6))
+        } else {
+            // Case 2: ETH pair
+            // For ETH pairs, we use ETH price to calculate USD value
+            let weth = H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+            let eth_price = U256::from(1500); // ETH price in USD
+            
+            if self.token0 == weth {
+                // Convert ETH amount to USD: reserve0 * ETH_price
+                // Adjust for 18 decimals of ETH
+                self.reserve0 * eth_price
+            } else if self.token1 == weth {
+                self.reserve1 * eth_price
+            } else {
+                // Case 3: Other token pairs
+                // For other pairs, we need price oracle data
+                // Currently returning 0 as we can't determine price
+                // In production, you should:
+                // 1. Use Chainlink price feeds
+                // 2. Or calculate using common pairs (USDC/token, ETH/token)
+                // 3. Or skip these pairs entirely
+                U256::zero()
+            }
+        }
+    }
 }
+
+// Example thresholds for different risk levels
+pub const LOW_LIQUIDITY_THRESHOLD: U256 = U256([1_000_000_000_000, 0, 0, 0]);     // $1,000
+pub const MEDIUM_LIQUIDITY_THRESHOLD: U256 = U256([10_000_000_000_000, 0, 0, 0]); // $10,000
+pub const HIGH_LIQUIDITY_THRESHOLD: U256 = U256([100_000_000_000_000, 0, 0, 0]);  // $100,000
 
 pub async fn load_all_pools_from_v2(
     wss_url: String,
@@ -121,6 +166,8 @@ pub async fn load_all_pools_from_v2(
                 decimals0: pool.token_a_decimals,
                 decimals1: pool.token_b_decimals,
                 fee: pool.fee,
+                reserve0: pool.reserve_a,
+                reserve1: pool.reserve_b,
             },
             CfmmsPool::UniswapV3(pool) => Pool {
                 address: pool.address,
@@ -130,6 +177,8 @@ pub async fn load_all_pools_from_v2(
                 decimals0: pool.token_a_decimals,
                 decimals1: pool.token_b_decimals,
                 fee: pool.fee,
+                reserve0: pool.reserve_a,
+                reserve1: pool.reserve_b,
             },
         })
         .collect();

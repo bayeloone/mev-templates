@@ -6,6 +6,7 @@ use log::info;
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tokio::sync::broadcast::Sender;
 
+use crate::bundler::{Bundler, PathParam, Flashloan};
 use crate::constants::{get_blacklist_tokens, Env, WEI};
 use crate::multi::batch_get_uniswap_v2_reserves;
 use crate::paths::generate_triangular_paths;
@@ -135,11 +136,71 @@ pub async fn event_handler(provider: Arc<Provider<Ws>>, event_sender: Sender<Eve
                         let path_idx = spread.0;
                         let path = &paths[*path_idx];
                         let opt = path.optimize_amount_in(U256::from(1000), 10, &reserves);
+                        let min_profit_threshold = gas_cost_in_usdc * U256::from(2); // 2x gas cost
                         let excess_profit =
                             (opt.1.as_u128() as i128) - (gas_cost_in_usdc.as_u128() as i128);
 
-                        // TODO
-                        if excess_profit > 0 {}
+                        if excess_profit > min_profit_threshold.as_u128() as i128 {
+                            let bundler = Bundler::new();
+                            
+                            // Create path parameters for the arbitrage
+                            let paths = vec![
+                                PathParam {
+                                    router: path.router_1,
+                                    token_in: path.token_in,
+                                    token_out: path.token_mid,
+                                },
+                                PathParam {
+                                    router: path.router_2,
+                                    token_in: path.token_mid,
+                                    token_out: path.token_out,
+                                },
+                                PathParam {
+                                    router: path.router_3,
+                                    token_in: path.token_out,
+                                    token_out: path.token_in,
+                                },
+                            ];
+
+                            // Dynamic gas pricing based on network conditions
+                            let priority_multiplier = if excess_profit > (min_profit_threshold.as_u128() as i128 * 3) {
+                                U256::from(3) // Higher priority for very profitable trades
+                            } else {
+                                U256::from(2)
+                            };
+                            
+                            let max_priority_fee = base_fee * priority_multiplier;
+                            let max_fee = base_fee * (priority_multiplier + U256::from(1));
+
+                            match bundler.order_tx(
+                                paths,
+                                opt.0, // optimal amount in
+                                Flashloan::NotUsed,
+                                Address::zero(),
+                                max_priority_fee,
+                                max_fee,
+                            ).await {
+                                Ok(tx) => {
+                                    // Sign the transaction
+                                    if let Ok(signed_tx) = bundler.sign_tx(tx).await {
+                                        // Create and send the bundle with backrun protection
+                                        let bundle = bundler.to_bundle(
+                                            vec![signed_tx],
+                                            block.block_number,
+                                        ).set_revert_if_partial(); // Prevent partial bundle execution
+                                        
+                                        if let Ok(hash) = bundler.send_bundle(bundle).await {
+                                            info!("Bundle sent successfully! Hash: {:?}, Profit: {:?} USDC", hash, excess_profit);
+                                        } else {
+                                            info!("Failed to send bundle");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    info!("Failed to create transaction: {:?}", e);
+                                }
+                            }
+                        }
                     }
                 }
                 Event::PendingTx(_) => {

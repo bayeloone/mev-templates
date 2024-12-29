@@ -1,1 +1,0 @@
-# MEV template for Pythonistas

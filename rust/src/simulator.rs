@@ -34,10 +34,29 @@ impl UniswapV2Simulator {
         reserve_out: U256,
         fee: U256,
     ) -> Option<U256> {
+        // Check for zero reserves
+        if reserve_in.is_zero() || reserve_out.is_zero() {
+            return None;
+        }
+
+        // Check if amount_in is too large (>30% of reserve)
+        if amount_in > (reserve_in * U256::from(30) / U256::from(100)) {
+            return None;
+        }
+
         let fee = fee / U256::from(100);
         let amount_in_with_fee = amount_in * (U256::from(1000) - fee);
         let numerator = amount_in_with_fee * reserve_out;
         let denominator = (reserve_in * 1000) + amount_in_with_fee;
-        numerator.checked_div(denominator)
+        
+        // Check for minimum output (1% slippage tolerance)
+        let amount_out = numerator.checked_div(denominator)?;
+        let min_out = amount_out * U256::from(99) / U256::from(100);
+        
+        if min_out.is_zero() {
+            return None;
+        }
+        
+        Some(amount_out)
     }
 }

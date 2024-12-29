@@ -5,8 +5,8 @@ use std::{collections::HashMap, time::Instant};
 
 use crate::bundler::PathParam;
 use crate::multi::Reserve;
-use crate::pools::Pool;
-use crate::simulator::UniswapV2Simulator;
+use crate::pools::{Pool, LOW_LIQUIDITY_THRESHOLD};
+use log::info;
 
 #[derive(Debug, Clone)]
 pub struct ArbPath {
@@ -228,6 +228,27 @@ pub fn generate_triangular_paths(pools: &Vec<Pool>, token_in: H160) -> Vec<ArbPa
                                 if unique_pool_cnt < 3 {
                                     continue;
                                 }
+
+                                // Check liquidity for all pools in the path
+                                // We require minimum $1000 in each pool to avoid high-slippage trades
+                                let pool1_liq = pool_1.get_liquidity_usd();
+                                let pool2_liq = pool_2.get_liquidity_usd();
+                                let pool3_liq = pool_3.get_liquidity_usd();
+
+                                if pool1_liq < LOW_LIQUIDITY_THRESHOLD || 
+                                   pool2_liq < LOW_LIQUIDITY_THRESHOLD || 
+                                   pool3_liq < LOW_LIQUIDITY_THRESHOLD {
+                                    // Skip paths with insufficient liquidity
+                                    continue;
+                                }
+
+                                // Log liquidity information for debugging
+                                info!(
+                                    "Found path with liquidity: Pool1: ${}, Pool2: ${}, Pool3: ${}",
+                                    pool1_liq.as_u128() / 1_000_000, // Convert to USD
+                                    pool2_liq.as_u128() / 1_000_000,
+                                    pool3_liq.as_u128() / 1_000_000
+                                );
 
                                 let arb_path = ArbPath {
                                     nhop: 3,
